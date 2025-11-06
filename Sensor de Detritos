@@ -1,7 +1,7 @@
 #include <WiFi.h>      // Biblioteca para conectar ao Wi-Fi
 #include <HTTPClient.h>  // Biblioteca para fazer requisições à "nuvem"
 
-// Definição dos pinos
+// Pinos do Hardware
 #define TRIG_PIN 13
 #define ECHO_PIN 12
 
@@ -9,74 +9,61 @@
 float distMinimaCm = 30.0; // Se a distância for MENOR que 30cm, a fossa está "cheia"
 bool alertaEnviado = false; // Trava para não enviar mil alertas
 
-// Função para ler o sensor ultrassônico
+// FUNÇÃO PARA LER O SENSOR ULTRASSÔNICO
 float lerDistanciaCm() {
-  // Limpa o pino de trigger
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
-  
-  // Envia o pulso sonoro
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-  
-  // Lê o tempo de retorno do pulso
   long duration = pulseIn(ECHO_PIN, HIGH);
-  
-  // Converte o tempo em distância (cm)
   float distance = (duration * 0.0343) / 2.0;
-  
   return distance;
-}
+} 
 
-// Função para enviar o alerta para a nuvem
+// Função para enviar alerta para nuvem
 void enviarAlertaParaNuvem() {
+  
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http; 
 
-    // URL do bot para fazer os alertas
+    // URL do bot que irá enviar a mensagem
     String urlDoWebhook = "https://canary.discord.com/api/webhooks/1435780967942983921/qoLg9I-c8EY51TbU5r-zNSOIWDOBhUJbXqDPcP_sjGUTFuzE9gEixce40yq3ZrNXnGKz";
     
     Serial.println("Enviando alerta para o Discord...");
 
-    // Aponta para a URL de destino. 
     http.begin(urlDoWebhook); 
-    
-    // O Discord espera uma mensagem em formato JSON
     http.addHeader("Content-Type", "application/json");
 
-    // Prepara a mensagem que o bot vai postar
     String corpoDaMensagem = "{\"content\":\"@everyone ALERTA DE FOSSA CHEIA! O sensor detectou que está perto do nível máximo!"}";
 
     // Envia a requisição (POST) com a mensagem
-    int httpCode = http.POST(corpoDaMensagem);
+    int httpCode = http.POST(corpoDaMensagem.c_str()); // <-- Correção .c_str()
 
-    // Verifica se o envio deu certo (códigos 2xx são sucesso)
+    // Verifica se o envio deu certo
     if (httpCode >= 200 && httpCode < 300) {
       Serial.println("[HTTP] Alerta enviado ao Discord com sucesso!");
     } else {
       Serial.printf("[HTTP] Falha ao enviar. Código: %d, Erro: %s\n", httpCode, http.errorToString(httpCode).c_str());
     }
 
-    // Libera os recursos
     http.end();
 
-  } else {
+  } else { 
     Serial.println("Erro: Sem conexão Wi-Fi para enviar alerta.");
   }
+  
 }
 
 // SETUP - Executa uma vez quando o ESP32 liga
 void setup() {
-  Serial.begin(115200); // Inicia a comunicação serial para vermos as mensagens
+  Serial.begin(115200); 
   
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
   Serial.println("Iniciando conexão Wi-Fi...");
   
-  // Conecta na rede Wi-Fi simulada do Wokwi.
-  // Não precisa de senha!
   WiFi.begin("Wokwi-GUEST", "");
   
   while (WiFi.status() != WL_CONNECTED) {
@@ -89,7 +76,6 @@ void setup() {
 }
 
 void loop() {
-  // Lê a distância do sensor
   float distanciaAtual = lerDistanciaCm();
   
   Serial.print("Distância medida: ");
@@ -100,20 +86,22 @@ void loop() {
   if (distanciaAtual < distMinimaCm && distanciaAtual > 0) {
     // Fossa está cheia!
     if (!alertaEnviado) {
-      // Se o alerta ainda não foi enviado, envie agora!
       enviarAlertaParaNuvem();
-      alertaEnviado = true; // Marca que já enviamos
+      alertaEnviado = true; 
     } else {
       Serial.println("(Fossa cheia, mas alerta já foi enviado)");
-    }
+    } 
+  
   } else {
+    
     // Fossa não está cheia, reseta o status do alerta
     if (alertaEnviado) {
       Serial.println("Nível da fossa normalizado, resetando alerta.");
       alertaEnviado = false;
     }
   }
-  
+
   // Espera 5 segundos antes de medir de novo
   delay(5000); 
+  
 }
