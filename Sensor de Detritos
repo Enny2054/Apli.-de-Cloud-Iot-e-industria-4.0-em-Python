@@ -1,107 +1,122 @@
-#include <WiFi.h>      // Biblioteca para conectar ao Wi-Fi
-#include <HTTPClient.h>  // Biblioteca para fazer requisições à "nuvem"
+#include <WiFi.h> // Biblioteca paraa conectar o esp32 a uma rede wifi
+#include <HTTPClient.h> // Biblioteca para enviar requisições HTTP
+#include <WiFiClientSecure.h>  // Biblioteca que permite conexões HTTPS
 
-// Pinos do Hardware
+// Configurações dos pinos
 #define TRIG_PIN 13
 #define ECHO_PIN 12
 
-// Configurações do Alerta
-float distMinimaCm = 30.0; // Se a distância for MENOR que 30cm, a fossa está "cheia"
-bool alertaEnviado = false; // Trava para não enviar mil alertas
+// Configurações do alerta
+float distMinimaCm = 30.0;   // Distância limite (cm)
+bool alertaEnviado = false;  // Evita alertas repetidos
 
-// FUNÇÃO PARA LER O SENSOR ULTRASSÔNICO
+// Configuração do wi-fi
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+// URL do webhook
+String urlDoWebhook = "https://canary.discord.com/api/webhooks/1435780967942983921/qoLg9I-c8EY51TbU5r-zNSOIWDOBhUJbXqDPcP_sjGUTFuzE9gEixce40yq3ZrNXnGKz";
+
+// Função para calcular distância
 float lerDistanciaCm() {
   digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
+  delayMicroseconds(5);
+
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-  long duration = pulseIn(ECHO_PIN, HIGH);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) {
+    return -1.0;
+  }
+
   float distance = (duration * 0.0343) / 2.0;
   return distance;
-} 
+}
 
 // Função para enviar alerta para nuvem
 void enviarAlertaParaNuvem() {
-  
   if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http; 
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
 
-    // URL do bot que irá enviar a mensagem
-    String urlDoWebhook = "https://canary.discord.com/api/webhooks/1435780967942983921/qoLg9I-c8EY51TbU5r-zNSOIWDOBhUJbXqDPcP_sjGUTFuzE9gEixce40yq3ZrNXnGKz";
-    
     Serial.println("Enviando alerta para o Discord...");
-
-    http.begin(urlDoWebhook); 
+    http.begin(client, urlDoWebhook.c_str());
     http.addHeader("Content-Type", "application/json");
 
-    String corpoDaMensagem = "{\"content\":\"@everyone ALERTA DE FOSSA CHEIA! O sensor detectou que está perto do nível máximo!"}";
+    String corpoDaMensagem = "{\"content\":\"@everyone ALERTA DE FOSSA CHEIA! O sensor detectou que está perto do nível máximo!\"}";
 
-    // Envia a requisição (POST) com a mensagem
-    int httpCode = http.POST(corpoDaMensagem.c_str()); // <-- Correção .c_str()
-
-    // Verifica se o envio deu certo
-    if (httpCode >= 200 && httpCode < 300) {
-      Serial.println("[HTTP] Alerta enviado ao Discord com sucesso!");
+    int httpCode = http.POST(corpoDaMensagem);
+    if (httpCode > 0) {
+      Serial.printf("[HTTP] Codigo: %d\n", httpCode);
+      if (httpCode >= 200 && httpCode < 300) {
+        Serial.println("[HTTP] Alerta enviado com sucesso!");
+      } else {
+        Serial.printf("[HTTP] Falha ao enviar (status %d): %s\n", httpCode, http.getString().c_str());
+      }
     } else {
-      Serial.printf("[HTTP] Falha ao enviar. Código: %d, Erro: %s\n", httpCode, http.errorToString(httpCode).c_str());
+      Serial.printf("[HTTP] Erro ao conectar: %s\n", http.errorToString(httpCode).c_str());
     }
 
     http.end();
-
-  } else { 
-    Serial.println("Erro: Sem conexão Wi-Fi para enviar alerta.");
+  } else {
+    Serial.println("Erro: sem conexao Wi-Fi.");
   }
-  
 }
-
-// SETUP - Executa uma vez quando o ESP32 liga
+// Executa apenas uma vez quando o esp32 liga
 void setup() {
-  Serial.begin(115200); 
-  
+  Serial.begin(115200);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  digitalWrite(TRIG_PIN, LOW);
 
-  Serial.println("Iniciando conexão Wi-Fi...");
-  
-  WiFi.begin("Wokwi-GUEST", "");
-  
+  Serial.println("Conectando ao Wi-Fi...");
+  WiFi.begin(ssid, password);
+  unsigned long startAttempt = millis();
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    if (millis() - startAttempt > 20000) {
+      Serial.println("\nFalha ao conectar Wi-Fi (timeout).");
+      break;
+    }
   }
-  
-  Serial.println("\nConectado ao Wi-Fi!");
-  Serial.println(WiFi.localIP());
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConectado ao Wi-Fi!");
+    Serial.println(WiFi.localIP());
+  }
 }
-
+// Função de loop
 void loop() {
   float distanciaAtual = lerDistanciaCm();
-  
-  Serial.print("Distância medida: ");
+
+  if (distanciaAtual < 0 || distanciaAtual > 400) {
+    Serial.println("Leitura invalida do sensor. Tentando novamente...");
+    delay(2000);
+    return;
+  }
+
+  Serial.print("Distancia medida: ");
   Serial.print(distanciaAtual);
   Serial.println(" cm");
 
-  // Faz a lógica de decisão
-  if (distanciaAtual < distMinimaCm && distanciaAtual > 0) {
-    // Fossa está cheia!
+  if (distanciaAtual < distMinimaCm) {
     if (!alertaEnviado) {
       enviarAlertaParaNuvem();
-      alertaEnviado = true; 
+      alertaEnviado = true;
     } else {
-      Serial.println("(Fossa cheia, mas alerta já foi enviado)");
-    } 
-  
+      Serial.println("(Fossa cheia, mas alerta ja foi enviado)");
+    }
   } else {
-    
-    // Fossa não está cheia, reseta o status do alerta
     if (alertaEnviado) {
-      Serial.println("Nível da fossa normalizado, resetando alerta.");
+      Serial.println("Nivel normalizado, resetando alerta.");
       alertaEnviado = false;
+    } else {
+      Serial.println("Nivel dentro do normal.");
     }
   }
 
-  // Espera 5 segundos antes de medir de novo
-  delay(5000); 
-  
+  delay(5000);
 }
